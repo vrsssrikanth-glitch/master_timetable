@@ -322,7 +322,7 @@ FAC_BLOCKED = {
 
 LAB_ROOMS = dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
 
-ROOM_COLS = [c for c in rooms_df.columns if c.upper().startswith("ROOM")]
+ROOM_COLS = [c for c in rooms_df.columns if c.upper().startswith("Room_ID")]
 if not ROOM_COLS:
     st.error("No ROOM column was found in the Supabase 'rooms' table.")
     st.stop()
