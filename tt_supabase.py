@@ -327,7 +327,7 @@ LAB_ROOMS = dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
 # ==================================================
 
 # Room_ID = actual room/lab name
-if "Room_ID" not in rooms_df.columns:
+if "Room" not in rooms_df.columns:
     st.error(
         "❌ Supabase 'rooms' table must contain a 'Room_ID' column. "
         f"Available columns: {list(rooms_df.columns)}"
