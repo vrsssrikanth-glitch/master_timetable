@@ -322,72 +322,42 @@ FAC_BLOCKED = {
 
 LAB_ROOMS = dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
 
-# ==================================================
-# ROOMS
-# ==================================================
+# Find the room-name column regardless of capitalization
+ROOM_COLUMN_CANDIDATES = [
+    "ROOM",
+    "room",
+    "Room",
+    "ROOM_NAME",
+    "room_name",
+    "Room_Name",
+    "ROOM_ID",
+    "room_id",
+    "Room_ID",
+]
 
-# Room_ID = actual room/lab name
-if "Room" not in rooms_df.columns:
+ROOM_COL = next(
+    (c for c in ROOM_COLUMN_CANDIDATES if c in rooms_df.columns),
+    None
+)
+
+if ROOM_COL is None:
     st.error(
-        "❌ Supabase 'rooms' table must contain a 'Room_ID' column. "
+        "❌ Could not identify the room column in Supabase table 'rooms'. "
         f"Available columns: {list(rooms_df.columns)}"
     )
     st.stop()
 
-if "Type" not in rooms_df.columns:
-    st.error(
-        "❌ Supabase 'rooms' table must contain a 'Type' column. "
-        f"Available columns: {list(rooms_df.columns)}"
-    )
-    st.stop()
-
-# Clean room information
-rooms_df["Room_ID"] = (
-    rooms_df["Room_ID"]
-    .astype(str)
-    .str.strip()
-    .str.upper()
-)
-
-rooms_df["Type"] = (
-    rooms_df["Type"]
-    .astype(str)
-    .str.strip()
-    .str.upper()
-)
-
-# All rooms
 ALL_ROOMS = (
-    rooms_df["Room_ID"]
+    rooms_df[ROOM_COL]
     .dropna()
+    .astype(str)
+    .str.strip()
+    .str.upper()
     .unique()
     .tolist()
 )
 
-# Theory rooms only
-THEORY_ROOMS = (
-    rooms_df.loc[
-        rooms_df["Type"].isin(["THEORY", "THEORY ROOM", "CLASSROOM"]),
-        "Room_ID"
-    ]
-    .dropna()
-    .unique()
-    .tolist()
-)
-
-# Lab rooms only
-LAB_ROOMS_FROM_DB = (
-    rooms_df.loc[
-        rooms_df["Type"].isin(["LAB", "LAB ROOM", "LABORATORY"]),
-        "Room_ID"
-    ]
-    .dropna()
-    .unique()
-    .tolist()
-)
-
-# First 14 theory rooms are the default primary rooms
-PRIMARY_ROOMS = THEORY_ROOMS[:14]
+PRIMARY_ROOMS = ALL_ROOMS[:14]
 
 CLASSES = sorted(classes_df["Class_ID"].dropna().unique().tolist())
 LOCKED_CLASSES = CLASSES[:14]
