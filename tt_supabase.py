@@ -296,6 +296,7 @@ faculty, subjects, classes_df, teaching, fac_avail, labs_df, rooms_df = (
     fetch_master_data()
 )
 
+# Standardize column headers across all tables
 for data in [
     faculty,
     subjects,
@@ -305,6 +306,7 @@ for data in [
     labs_df,
     rooms_df,
 ]:
+    data.columns = [str(c).strip() for c in data.columns]
     for c in data.columns:
         if data[c].dtype == object:
             data[c] = data[c].apply(clean)
@@ -324,14 +326,20 @@ SUB_MAX_HOURS = {
     for _, r in teaching.iterrows()
 }
 
-FAC_BLOCKED = {
-    (
-        r.Faculty_ID,
-        DAY_MAP.get(str(r.Day).upper(), r.Day),
-        int(r.Period),
-    )
-    for _, r in fac_avail.iterrows()
-}
+# Robust conversion for faculty_availability table
+FAC_BLOCKED = set()
+if not fac_avail.empty:
+    for _, r in fac_avail.iterrows():
+        fac_id = str(r.get("Faculty_ID", "")).strip().upper()
+        raw_day = str(r.get("Day", "")).strip().upper()
+        mapped_day = DAY_MAP.get(raw_day, raw_day.title())
+        raw_p = r.get("Period")
+
+        if fac_id and mapped_day in DAYS and pd.notna(raw_p):
+            try:
+                FAC_BLOCKED.add((fac_id, mapped_day, int(raw_p)))
+            except ValueError:
+                pass
 
 LAB_ROOMS = dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
 
