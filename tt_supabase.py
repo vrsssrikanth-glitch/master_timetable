@@ -98,7 +98,7 @@ def fetch_table(table_name):
 
 
 def normalize_columns(df):
-    """Maps snake_case and lowercase Supabase columns to standard Title_Case."""
+    """Normalizes all DataFrame columns to standard uppercase Title_Case."""
     col_map = {
         "class_id": "Class_ID",
         "subject_id": "Subject_ID",
@@ -110,7 +110,7 @@ def normalize_columns(df):
         "period": "Period",
         "room": "Room",
     }
-    # Map exact lowercase matches
+    # Map exact lowercase or case-insensitive matches
     df = df.rename(columns={c: col_map.get(c.lower(), c) for c in df.columns})
     return df
 
@@ -320,6 +320,22 @@ for data in [
         if data[c].dtype == object:
             data[c] = data[c].apply(clean)
 
+# Explicit fallback cleanup for teaching table columns
+teaching_cols_upper = {c.upper(): c for c in teaching.columns}
+if "CLASS_ID" in teaching_cols_upper:
+    teaching.rename(columns={teaching_cols_upper["CLASS_ID"]: "Class_ID"}, inplace=True)
+if "SUBJECT_ID" in teaching_cols_upper:
+    teaching.rename(columns={teaching_cols_upper["SUBJECT_ID"]: "Subject_ID"}, inplace=True)
+if "FACULTY_ID" in teaching_cols_upper:
+    teaching.rename(columns={teaching_cols_upper["FACULTY_ID"]: "Faculty_ID"}, inplace=True)
+if "HOURS" in teaching_cols_upper:
+    teaching.rename(columns={teaching_cols_upper["HOURS"]: "Hours"}, inplace=True)
+
+# Debug Expander in Streamlit sidebar/top for verifying teaching load inputs
+with st.expander("🔍 Debug: Loaded Supabase Data", expanded=False):
+    st.write("`teaching_load` table output from Supabase:")
+    st.dataframe(teaching)
+
 # ==================================================
 # LOOKUPS
 # ==================================================
@@ -340,7 +356,7 @@ SUB_FAC = (
 
 SUB_MAX_HOURS = (
     {
-        (r.Class_ID, r.Subject_ID): int(r.Hours)
+        (r.Class_ID, r.Subject_ID): int(r.Hours) if str(r.Hours).isdigit() else 0
         for _, r in teaching.iterrows()
     }
     if {"Class_ID", "Subject_ID", "Hours"}.issubset(teaching.columns)
@@ -600,7 +616,7 @@ with c1:
         )
 
         if not subs:
-            st.warning("No subjects found for this class.")
+            st.warning("No subjects found for this class in 'teaching_load'. Please check your Supabase records.")
             sub = None
         else:
             sub = st.selectbox("Subject", subs)
