@@ -35,6 +35,12 @@ DAY_MAP = {
     "THU": "Thursday",
     "FRI": "Friday",
     "SAT": "Saturday",
+    "MONDAY": "Monday",
+    "TUESDAY": "Tuesday",
+    "WEDNESDAY": "Wednesday",
+    "THURSDAY": "Thursday",
+    "FRIDAY": "Friday",
+    "SATURDAY": "Saturday",
 }
 
 TWO_PERIOD_SUBS = {"EWS", "ITWS", "EGT", "NSS", "HWYS"}
@@ -110,7 +116,6 @@ def normalize_columns(df):
         "period": "Period",
         "room": "Room",
     }
-    # Map exact lowercase or case-insensitive matches
     df = df.rename(columns={c: col_map.get(c.lower(), c) for c in df.columns})
     return df
 
@@ -140,12 +145,12 @@ def load_timetable():
         for r in rows.to_dict("records"):
             formatted_rows.append(
                 {
-                    "Class": r.get("class_id", r.get("Class", "")),
-                    "Subject": r.get("subject", r.get("Subject", "")),
-                    "Faculty": r.get("faculty_id", r.get("Faculty", "")),
+                    "Class": clean(r.get("class_id", r.get("Class", ""))),
+                    "Subject": clean(r.get("subject", r.get("Subject", ""))),
+                    "Faculty": clean(r.get("faculty_id", r.get("Faculty", ""))),
                     "Day": r.get("day", r.get("Day", "")),
                     "Period": int(r.get("period", r.get("Period", 0))),
-                    "Room": r.get("room", r.get("Room", "")),
+                    "Room": clean(r.get("room", r.get("Room", ""))),
                 }
             )
         return formatted_rows
@@ -181,7 +186,7 @@ def load_room_locks():
             return {}
 
         return {
-            str(r.get("class_id", r.get("Class_ID", ""))): str(r.get("room", r.get("Room", "")))
+            clean(r.get("class_id", r.get("Class_ID", ""))): clean(r.get("room", r.get("Room", "")))
             for r in rows.to_dict("records")
         }
     except Exception as e:
@@ -320,7 +325,7 @@ for data in [
         if data[c].dtype == object:
             data[c] = data[c].apply(clean)
 
-# Explicit fallback cleanup for teaching table columns
+# Fallback column mappings
 teaching_cols_upper = {c.upper(): c for c in teaching.columns}
 if "CLASS_ID" in teaching_cols_upper:
     teaching.rename(columns={teaching_cols_upper["CLASS_ID"]: "Class_ID"}, inplace=True)
@@ -330,11 +335,6 @@ if "FACULTY_ID" in teaching_cols_upper:
     teaching.rename(columns={teaching_cols_upper["FACULTY_ID"]: "Faculty_ID"}, inplace=True)
 if "HOURS" in teaching_cols_upper:
     teaching.rename(columns={teaching_cols_upper["HOURS"]: "Hours"}, inplace=True)
-
-# Debug Expander in Streamlit sidebar/top for verifying teaching load inputs
-with st.expander("🔍 Debug: Loaded Supabase Data", expanded=False):
-    st.write("`teaching_load` table output from Supabase:")
-    st.dataframe(teaching)
 
 # ==================================================
 # LOOKUPS
@@ -364,18 +364,24 @@ SUB_MAX_HOURS = (
 )
 
 FAC_BLOCKED = set()
-if not fac_avail.empty and {"Faculty_ID", "Day", "Period"}.issubset(fac_avail.columns):
-    for _, r in fac_avail.iterrows():
-        fac_id = str(r.get("Faculty_ID", "")).strip().upper()
-        raw_day = str(r.get("Day", "")).strip().upper()
-        mapped_day = DAY_MAP.get(raw_day, raw_day.title())
-        raw_p = r.get("Period")
+if not fac_avail.empty:
+    avail_cols_upper = {c.upper(): c for c in fac_avail.columns}
+    f_col = avail_cols_upper.get("FACULTY_ID")
+    d_col = avail_cols_upper.get("DAY")
+    p_col = avail_cols_upper.get("PERIOD")
 
-        if fac_id and mapped_day in DAYS and pd.notna(raw_p):
-            try:
-                FAC_BLOCKED.add((fac_id, mapped_day, int(raw_p)))
-            except ValueError:
-                pass
+    if f_col and d_col and p_col:
+        for _, r in fac_avail.iterrows():
+            fac_id = clean(r[f_col])
+            raw_day = clean(r[d_col])
+            mapped_day = DAY_MAP.get(raw_day, raw_day.title())
+            raw_p = r[p_col]
+
+            if fac_id and mapped_day in DAYS and pd.notna(raw_p):
+                try:
+                    FAC_BLOCKED.add((fac_id, mapped_day, int(raw_p)))
+                except ValueError:
+                    pass
 
 LAB_ROOMS = (
     dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
@@ -706,7 +712,9 @@ def faculty_grid_with_availability(data, faculty_id):
     for day in DAYS:
         for p in PERIODS:
             if (faculty_id, day, p) in FAC_BLOCKED:
-                style.loc[day, p] = "background-color: #ffcccc"
+                if not g.loc[day, p]:
+                    g.loc[day, p] = "UNAVAILABLE"
+                style.loc[day, p] = "background-color: #ffcccc; color: #900000; font-weight: bold;"
 
     return g.style.apply(lambda _: style, axis=None)
 
@@ -742,11 +750,10 @@ with tab2:
 
         fdf = df[df["Faculty"] == fid] if "Faculty" in df.columns else pd.DataFrame()
 
-        if not fdf.empty:
-            st.dataframe(
-                faculty_grid_with_availability(fdf, fid),
-                use_container_width=True,
-            )
+        st.dataframe(
+            faculty_grid_with_availability(fdf, fid),
+            use_container_width=True,
+        )
 
         st.caption("🔴 Red cells indicate faculty unavailable slots")
 
