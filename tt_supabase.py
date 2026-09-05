@@ -126,8 +126,21 @@ def load_timetable():
         if rows.empty:
             return []
 
-        # The database ID is useful for deletion but not needed in the UI.
-        return rows.to_dict("records")
+        # Convert Supabase database column names (snake_case)
+        # to match internal Streamlit state keys (Title Case)
+        formatted_rows = []
+        for r in rows.to_dict("records"):
+            formatted_rows.append(
+                {
+                    "Class": r.get("class_id", r.get("Class", "")),
+                    "Subject": r.get("subject", r.get("Subject", "")),
+                    "Faculty": r.get("faculty_id", r.get("Faculty", "")),
+                    "Day": r.get("day", r.get("Day", "")),
+                    "Period": int(r.get("period", r.get("Period", 0))),
+                    "Room": r.get("room", r.get("Room", "")),
+                }
+            )
+        return formatted_rows
     except Exception as e:
         st.error(f"Could not load timetable from Supabase: {e}")
         st.stop()
@@ -239,7 +252,7 @@ def subject_progress(cls, sub):
     used = sum(
         1
         for r in st.session_state.TT
-        if r["Class"] == cls and r["Subject"] == sub
+        if r.get("Class") == cls and r.get("Subject") == sub
     )
     total = SUB_MAX_HOURS.get((cls, sub), 0)
     return f"{used}/{total}"
@@ -253,7 +266,7 @@ def pending_load_row(cls):
         used = sum(
             1
             for r in st.session_state.TT
-            if r["Class"] == cls and r["Subject"] == s
+            if r.get("Class") == cls and r.get("Subject") == s
         )
         total = SUB_MAX_HOURS.get((cls, s), 0)
 
@@ -265,11 +278,11 @@ def pending_load_row(cls):
 
 def library_overflow(day, period):
     used = {
-        r["Class"]
+        r.get("Class")
         for r in st.session_state.TT
         if r.get("Room") == "LIBRARY"
-        and r["Day"] == day
-        and int(r["Period"]) == int(period)
+        and r.get("Day") == day
+        and int(r.get("Period", 0)) == int(period)
     }
 
     # Maximum 3 classes in the library at one period.
@@ -364,10 +377,11 @@ if "CLASS_ROOM_LOCK" not in st.session_state:
 # CORE CHECKS
 # ==================================================
 def busy(key, val, day, p):
+    key_alt = "class_id" if key == "Class" else "faculty_id" if key == "Faculty" else key.lower()
     return any(
-        r[key] == val
-        and r["Day"] == day
-        and int(r["Period"]) == int(p)
+        (r.get(key) == val or r.get(key_alt) == val)
+        and r.get("Day", r.get("day")) == day
+        and int(r.get("Period", r.get("period", 0))) == int(p)
         for r in st.session_state.TT
     )
 
@@ -378,9 +392,9 @@ def is_bi_lab_pair(sub1, sub2):
 
 def room_clash(day, start, dur, room):
     return any(
-        r["Room"] == room
-        and r["Day"] == day
-        and int(r["Period"]) in range(start, start + dur)
+        r.get("Room") == room
+        and r.get("Day") == day
+        and int(r.get("Period", 0)) in range(start, start + dur)
         for r in st.session_state.TT
     )
 
@@ -452,11 +466,11 @@ def add_entry(cls, sub, day, start):
             existing = [
                 r
                 for r in st.session_state.TT
-                if r["Day"] == day and int(r["Period"]) == p
+                if r.get("Day") == day and int(r.get("Period", 0)) == p
             ]
 
             if not any(
-                is_bi_lab_pair(sub, r["Subject"])
+                is_bi_lab_pair(sub, r.get("Subject"))
                 for r in existing
             ):
                 return "Faculty clash"
@@ -468,7 +482,7 @@ def add_entry(cls, sub, day, start):
     used = sum(
         1
         for r in st.session_state.TT
-        if r["Class"] == cls and r["Subject"] == sub
+        if r.get("Class") == cls and r.get("Subject") == sub
     )
 
     maxh = SUB_MAX_HOURS.get((cls, sub))
@@ -589,23 +603,23 @@ with c2:
             matching = [
                 r
                 for r in st.session_state.TT
-                if r["Class"] == dcls
-                and r["Day"] == dday
-                and int(r["Period"]) == int(dper)
+                if r.get("Class") == dcls
+                and r.get("Day") == dday
+                and int(r.get("Period", 0)) == int(dper)
             ]
 
             if not matching:
                 st.warning("No timetable entry found.")
-            elif matching[0]["Subject"] == "WEEKLY TEST":
+            elif matching[0].get("Subject") == "WEEKLY TEST":
                 st.warning("Weekly Test cannot be deleted from this screen.")
             elif delete_timetable_entry(dcls, dday, dper):
                 st.session_state.TT = [
                     r
                     for r in st.session_state.TT
                     if not (
-                        r["Class"] == dcls
-                        and r["Day"] == dday
-                        and int(r["Period"]) == int(dper)
+                        r.get("Class") == dcls
+                        and r.get("Day") == dday
+                        and int(r.get("Period", 0)) == int(dper)
                     )
                 ]
                 st.success("Deleted from Supabase.")
@@ -660,30 +674,32 @@ tab1, tab2, tab3, tab4 = st.tabs(
 
 with tab1:
     cls_v = st.selectbox("Class", CLASSES, key="cv")
-    cdf = df[df["Class"] == cls_v]
+    cdf = df[df["Class"] == cls_v] if "Class" in df.columns else pd.DataFrame()
 
-    st.dataframe(
-        grid(
-            cdf,
-            lambda r: (
-                f'{r["Subject"]} | CLASS COORDINATOR'
-                if r["Faculty"] == WEEKLY_TEST_FACULTY
-                else f'{r["Subject"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}'
+    if not cdf.empty:
+        st.dataframe(
+            grid(
+                cdf,
+                lambda r: (
+                    f'{r["Subject"]} | CLASS COORDINATOR'
+                    if r["Faculty"] == WEEKLY_TEST_FACULTY
+                    else f'{r["Subject"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}'
+                ),
             ),
-        ),
-        use_container_width=True,
-    )
+            use_container_width=True,
+        )
 
 with tab2:
     fname = st.selectbox("Faculty", sorted(FAC_NAME.values()))
     fid = [k for k, v in FAC_NAME.items() if v == fname][0]
 
-    fdf = df[df["Faculty"] == fid]
+    fdf = df[df["Faculty"] == fid] if "Faculty" in df.columns else pd.DataFrame()
 
-    st.dataframe(
-        faculty_grid_with_availability(fdf, fid),
-        use_container_width=True,
-    )
+    if not fdf.empty:
+        st.dataframe(
+            faculty_grid_with_availability(fdf, fid),
+            use_container_width=True,
+        )
 
     st.caption("🔴 Red cells indicate faculty unavailable slots")
 
@@ -700,15 +716,16 @@ with tab3:
         for b in pair
     ]
 
-    ldf = df[df["Subject"].isin([lab] + related_labs)]
+    ldf = df[df["Subject"].isin([lab] + related_labs)] if "Subject" in df.columns else pd.DataFrame()
 
-    st.dataframe(
-        grid(
-            ldf,
-            lambda r: f'{r["Class"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
-        ),
-        use_container_width=True,
-    )
+    if not ldf.empty:
+        st.dataframe(
+            grid(
+                ldf,
+                lambda r: f'{r["Class"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
+            ),
+            use_container_width=True,
+        )
 
 with tab4:
     st.subheader("Theory Room Planning")
@@ -748,22 +765,24 @@ with tab4:
 
     st.divider()
 
-    mirror = df[
-        (df["Class"] == mirror_cls)
-        & (~df["Subject"].fillna("").astype(str).str.endswith("LAB"))
-        & (~df["Subject"].isin(EXCLUDE_THEORY_ROOM))
-    ]
+    if not df.empty and "Class" in df.columns:
+        mirror = df[
+            (df["Class"] == mirror_cls)
+            & (~df["Subject"].fillna("").astype(str).str.endswith("LAB"))
+            & (~df["Subject"].isin(EXCLUDE_THEORY_ROOM))
+        ]
 
-    st.dataframe(
-        grid(
-            mirror,
-            lambda r: (
-                f'{r["Class"]} | {r["Subject"]} | '
-                f'{FAC_NAME.get(r["Faculty"], r["Faculty"])}'
-            ),
-        ),
-        use_container_width=True,
-    )
+        if not mirror.empty:
+            st.dataframe(
+                grid(
+                    mirror,
+                    lambda r: (
+                        f'{r["Class"]} | {r["Subject"]} | '
+                        f'{FAC_NAME.get(r["Faculty"], r["Faculty"])}'
+                    ),
+                ),
+                use_container_width=True,
+            )
 
     st.caption(
         "📌 Policy: Locked classes always use their locked room. "
@@ -779,52 +798,53 @@ def create_excel():
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
 
-        # CLASS TIMETABLES
-        for class_name in df["Class"].dropna().unique():
-            tt = grid(
-                df[df["Class"] == class_name],
-                lambda r: f'{r["Subject"]}\n{r["Faculty"]}',
-            )
-            tt.to_excel(
-                writer,
-                sheet_name=safe_sheet_name(class_name, "CLASS_"),
-            )
+        if not df.empty and "Class" in df.columns:
+            # CLASS TIMETABLES
+            for class_name in df["Class"].dropna().unique():
+                tt = grid(
+                    df[df["Class"] == class_name],
+                    lambda r: f'{r["Subject"]}\n{r["Faculty"]}',
+                )
+                tt.to_excel(
+                    writer,
+                    sheet_name=safe_sheet_name(class_name, "CLASS_"),
+                )
 
-        # FACULTY TIMETABLES
-        for fac in df["Faculty"].dropna().unique():
-            tt = grid(
-                df[df["Faculty"] == fac],
-                lambda r: r["Class"],
-            )
-            tt.to_excel(
-                writer,
-                sheet_name=safe_sheet_name(fac, "FAC_"),
-            )
+            # FACULTY TIMETABLES
+            for fac in df["Faculty"].dropna().unique():
+                tt = grid(
+                    df[df["Faculty"] == fac],
+                    lambda r: r["Class"],
+                )
+                tt.to_excel(
+                    writer,
+                    sheet_name=safe_sheet_name(fac, "FAC_"),
+                )
 
-        # LAB TIMETABLES
-        for lab_name in labs_df["Lab_Subject"].dropna().unique():
-            tt = grid(
-                df[df["Subject"] == lab_name],
-                lambda r: r["Class"],
-            )
-            tt.to_excel(
-                writer,
-                sheet_name=safe_sheet_name(lab_name, "LAB_"),
-            )
+            # LAB TIMETABLES
+            for lab_name in labs_df["Lab_Subject"].dropna().unique():
+                tt = grid(
+                    df[df["Subject"] == lab_name],
+                    lambda r: r["Class"],
+                )
+                tt.to_excel(
+                    writer,
+                    sheet_name=safe_sheet_name(lab_name, "LAB_"),
+                )
 
-        # ROOM TIMETABLES
-        for room_name in df["Room"].dropna().unique():
-            if str(room_name).strip() == "":
-                continue
+            # ROOM TIMETABLES
+            for room_name in df["Room"].dropna().unique():
+                if str(room_name).strip() == "":
+                    continue
 
-            tt = grid(
-                df[df["Room"] == room_name],
-                lambda r: r["Class"],
-            )
-            tt.to_excel(
-                writer,
-                sheet_name=safe_sheet_name(room_name, "ROOM_"),
-            )
+                tt = grid(
+                    df[df["Room"] == room_name],
+                    lambda r: r["Class"],
+                )
+                tt.to_excel(
+                    writer,
+                    sheet_name=safe_sheet_name(room_name, "ROOM_"),
+                )
 
     output.seek(0)
     return output.getvalue()
