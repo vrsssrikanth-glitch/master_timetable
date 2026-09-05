@@ -322,36 +322,17 @@ FAC_BLOCKED = {
 
 LAB_ROOMS = dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
 
-# Find the room-name column regardless of capitalization
-ROOM_COLUMN_CANDIDATES = [
-    "ROOM",
-    "room",
-    "Room",
-    "ROOM_NAME",
-    "room_name",
-    "Room_Name",
-    "ROOM_ID",
-    "room_id",
-    "Room_ID",
-]
-
-ROOM_COL = next(
-    (c for c in ROOM_COLUMN_CANDIDATES if c in rooms_df.columns),
-    None
-)
-
-if ROOM_COL is None:
-    st.error(
-        "❌ Could not identify the room column in Supabase table 'rooms'. "
-        f"Available columns: {list(rooms_df.columns)}"
-    )
+ROOM_COLS = [c for c in rooms_df.columns if c.upper().startswith("ROOM")]
+if not ROOM_COLS:
+    st.error("No ROOM column was found in the Supabase 'rooms' table.")
     st.stop()
+
+ROOM_COL = ROOM_COLS[0]
 
 ALL_ROOMS = (
     rooms_df[ROOM_COL]
     .dropna()
     .astype(str)
-    .str.strip()
     .str.upper()
     .unique()
     .tolist()
