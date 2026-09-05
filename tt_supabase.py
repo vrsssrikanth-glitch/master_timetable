@@ -252,7 +252,7 @@ def ensure_weekly_tests():
 
 
 def subject_duration(sub):
-    if sub.endswith("LAB"):
+    if "LAB" in sub:
         return 3
     if sub in THREE_PERIOD_SUBS:
         return 3
@@ -490,7 +490,7 @@ def add_entry(cls, sub, day, start):
     if start + dur - 1 > 7:
         return "Invalid period span"
 
-    if sub.endswith("LAB"):
+    if "LAB" in sub:
         room = LAB_ROOMS.get(sub)
 
         if not room:
@@ -759,28 +759,39 @@ with tab2:
 
 with tab3:
     if "Lab_Subject" in labs_df.columns:
-        lab = st.selectbox(
-            "Lab",
-            sorted(labs_df["Lab_Subject"].dropna().unique()),
-        )
+        lab_list = sorted(labs_df["Lab_Subject"].dropna().unique())
+        if lab_list:
+            lab = st.selectbox("Lab", lab_list)
 
-        related_labs = [
-            b
-            for pair in BI_LABS
-            if lab in pair
-            for b in pair
-        ]
+            # Extract base lab target and associated bi-lab subjects
+            related_labs = [
+                b
+                for pair in BI_LABS
+                if any(lab.lower() in p.lower() or p.lower() in lab.lower() for p in pair)
+                for b in pair
+            ]
+            all_target_labs = list(set([lab] + related_labs))
 
-        ldf = df[df["Subject"].isin([lab] + related_labs)] if "Subject" in df.columns else pd.DataFrame()
+            if not df.empty and "Subject" in df.columns:
+                # Use fuzzy/contains search across all timetable entries
+                ldf = df[
+                    df["Subject"].apply(
+                        lambda s: any(t.lower() in str(s).lower() for t in all_target_labs)
+                    )
+                ]
 
-        if not ldf.empty:
-            st.dataframe(
-                grid(
-                    ldf,
-                    lambda r: f'{r["Class"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
-                ),
-                use_container_width=True,
-            )
+                if not ldf.empty:
+                    st.dataframe(
+                        grid(
+                            ldf,
+                            lambda r: f'{r["Class"]} | {r["Subject"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
+                        ),
+                        use_container_width=True,
+                    )
+                else:
+                    st.warning("No scheduled classes found for this lab in the current timetable.")
+        else:
+            st.warning("No lab subjects available in Supabase 'labs' table.")
 
 with tab4:
     st.subheader("Theory Room Planning")
@@ -823,7 +834,7 @@ with tab4:
     if not df.empty and "Class" in df.columns:
         mirror = df[
             (df["Class"] == mirror_cls)
-            & (~df["Subject"].fillna("").astype(str).str.endswith("LAB"))
+            & (~df["Subject"].fillna("").astype(str).str.contains("LAB", case=False))
             & (~df["Subject"].isin(EXCLUDE_THEORY_ROOM))
         ]
 
