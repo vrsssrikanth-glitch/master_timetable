@@ -10,14 +10,6 @@ st.set_page_config(layout="wide")
 # ==================================================
 # SUPABASE CONNECTION
 # ==================================================
-# Add these in Streamlit Cloud -> Settings -> Secrets:
-#
-# SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
-# SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY"
-#
-# The program no longer reads any CSV file from the local machine.
-# All master data and timetable data are read/written in Supabase.
-
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY"))
 
@@ -105,15 +97,33 @@ def fetch_table(table_name):
     return pd.DataFrame(rows)
 
 
+def normalize_columns(df):
+    """Maps snake_case and lowercase Supabase columns to standard Title_Case."""
+    col_map = {
+        "class_id": "Class_ID",
+        "subject_id": "Subject_ID",
+        "faculty_id": "Faculty_ID",
+        "faculty_name": "Faculty_Name",
+        "lab_subject": "Lab_Subject",
+        "hours": "Hours",
+        "day": "Day",
+        "period": "Period",
+        "room": "Room",
+    }
+    # Map exact lowercase matches
+    df = df.rename(columns={c: col_map.get(c.lower(), c) for c in df.columns})
+    return df
+
+
 def fetch_master_data():
     try:
-        faculty = fetch_table(TABLE_FACULTY)
-        subjects = fetch_table(TABLE_SUBJECTS)
-        classes_df = fetch_table(TABLE_CLASSES)
-        teaching = fetch_table(TABLE_TEACHING)
-        fac_avail = fetch_table(TABLE_FAC_AVAIL)
-        labs_df = fetch_table(TABLE_LABS)
-        rooms_df = fetch_table(TABLE_ROOMS)
+        faculty = normalize_columns(fetch_table(TABLE_FACULTY))
+        subjects = normalize_columns(fetch_table(TABLE_SUBJECTS))
+        classes_df = normalize_columns(fetch_table(TABLE_CLASSES))
+        teaching = normalize_columns(fetch_table(TABLE_TEACHING))
+        fac_avail = normalize_columns(fetch_table(TABLE_FAC_AVAIL))
+        labs_df = normalize_columns(fetch_table(TABLE_LABS))
+        rooms_df = normalize_columns(fetch_table(TABLE_ROOMS))
         return faculty, subjects, classes_df, teaching, fac_avail, labs_df, rooms_df
     except Exception as e:
         st.error(f"Could not read master data from Supabase: {e}")
@@ -126,8 +136,6 @@ def load_timetable():
         if rows.empty:
             return []
 
-        # Convert Supabase database column names (snake_case)
-        # to match internal Streamlit state keys (Title Case)
         formatted_rows = []
         for r in rows.to_dict("records"):
             formatted_rows.append(
@@ -173,7 +181,7 @@ def load_room_locks():
             return {}
 
         return {
-            str(r["class_id"]): str(r["room"])
+            str(r.get("class_id", r.get("Class_ID", ""))): str(r.get("room", r.get("Room", "")))
             for r in rows.to_dict("records")
         }
     except Exception as e:
@@ -259,6 +267,9 @@ def subject_progress(cls, sub):
 
 
 def pending_load_row(cls):
+    if "Class_ID" not in teaching.columns or "Subject_ID" not in teaching.columns:
+        return "Load data unavailable"
+
     subs = teaching[teaching["Class_ID"] == cls]["Subject_ID"].unique()
     parts = []
 
@@ -285,7 +296,6 @@ def library_overflow(day, period):
         and int(r.get("Period", 0)) == int(period)
     }
 
-    # Maximum 3 classes in the library at one period.
     return len(used) >= 3
 
 
@@ -296,7 +306,6 @@ faculty, subjects, classes_df, teaching, fac_avail, labs_df, rooms_df = (
     fetch_master_data()
 )
 
-# Standardize column headers across all tables
 for data in [
     faculty,
     subjects,
@@ -314,21 +323,32 @@ for data in [
 # ==================================================
 # LOOKUPS
 # ==================================================
-FAC_NAME = dict(zip(faculty["Faculty_ID"], faculty["Faculty_Name"]))
+FAC_NAME = (
+    dict(zip(faculty["Faculty_ID"], faculty["Faculty_Name"]))
+    if "Faculty_ID" in faculty.columns and "Faculty_Name" in faculty.columns
+    else {}
+)
 
-SUB_FAC = {
-    (r.Class_ID, r.Subject_ID): r.Faculty_ID
-    for _, r in teaching.iterrows()
-}
+SUB_FAC = (
+    {
+        (r.Class_ID, r.Subject_ID): r.Faculty_ID
+        for _, r in teaching.iterrows()
+    }
+    if {"Class_ID", "Subject_ID", "Faculty_ID"}.issubset(teaching.columns)
+    else {}
+)
 
-SUB_MAX_HOURS = {
-    (r.Class_ID, r.Subject_ID): int(r.Hours)
-    for _, r in teaching.iterrows()
-}
+SUB_MAX_HOURS = (
+    {
+        (r.Class_ID, r.Subject_ID): int(r.Hours)
+        for _, r in teaching.iterrows()
+    }
+    if {"Class_ID", "Subject_ID", "Hours"}.issubset(teaching.columns)
+    else {}
+)
 
-# Robust conversion for faculty_availability table
 FAC_BLOCKED = set()
-if not fac_avail.empty:
+if not fac_avail.empty and {"Faculty_ID", "Day", "Period"}.issubset(fac_avail.columns):
     for _, r in fac_avail.iterrows():
         fac_id = str(r.get("Faculty_ID", "")).strip().upper()
         raw_day = str(r.get("Day", "")).strip().upper()
@@ -341,7 +361,11 @@ if not fac_avail.empty:
             except ValueError:
                 pass
 
-LAB_ROOMS = dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
+LAB_ROOMS = (
+    dict(zip(labs_df["Lab_Subject"], labs_df["Room"]))
+    if "Lab_Subject" in labs_df.columns and "Room" in labs_df.columns
+    else {}
+)
 
 ROOM_COLS = [c for c in rooms_df.columns if c.upper().startswith("ROOM")]
 if not ROOM_COLS:
@@ -361,12 +385,17 @@ ALL_ROOMS = (
 
 PRIMARY_ROOMS = ALL_ROOMS[:14]
 
-CLASSES = sorted(classes_df["Class_ID"].dropna().unique().tolist())
+CLASSES = (
+    sorted(classes_df["Class_ID"].dropna().unique().tolist())
+    if "Class_ID" in classes_df.columns
+    else []
+)
+
 LOCKED_CLASSES = CLASSES[:14]
 FLEX_CLASSES = CLASSES[14:]
 
 if not CLASSES:
-    st.error("No classes found in Supabase table 'classes'.")
+    st.error("No classes found in Supabase table 'classes'. Ensure 'Class_ID' column exists.")
     st.stop()
 
 # ==================================================
@@ -374,8 +403,6 @@ if not CLASSES:
 # ==================================================
 if "TT" not in st.session_state:
     st.session_state.TT = load_timetable()
-
-    # Add weekly test only if it is not already in Supabase.
     ensure_weekly_tests()
 
 if "CLASS_ROOM_LOCK" not in st.session_state:
@@ -415,15 +442,12 @@ def is_continuous(start, dur):
 # THEORY ROOM ALLOCATION
 # ==================================================
 def get_theory_room(cls, day, start, dur):
-    # 1. Explicit lock from Room View
     if cls in st.session_state.CLASS_ROOM_LOCK:
         return st.session_state.CLASS_ROOM_LOCK[cls]
 
-    # 2. Default locked classes (first 14)
     if cls in LOCKED_CLASSES:
         return PRIMARY_ROOMS[LOCKED_CLASSES.index(cls)]
 
-    # 3. Excess classes -> free primary room only in continuous slots
     if not is_continuous(start, dur):
         return None
 
@@ -444,7 +468,6 @@ def add_entry(cls, sub, day, start):
     if start + dur - 1 > 7:
         return "Invalid period span"
 
-    # ---------- ROOM ----------
     if sub.endswith("LAB"):
         room = LAB_ROOMS.get(sub)
 
@@ -462,7 +485,6 @@ def add_entry(cls, sub, day, start):
                 "only in continuous slots (1-2, 3-4, 1-4, 5-7)."
             )
 
-    # ---------- PERIOD CHECKS ----------
     for p in range(start, start + dur):
         if (fac, day, p) in FAC_BLOCKED:
             return f"{FAC_NAME.get(fac, fac)} unavailable"
@@ -486,7 +508,6 @@ def add_entry(cls, sub, day, start):
         if room == "LIBRARY" and library_overflow(day, p):
             return "Library already used by 3 classes"
 
-    # ---------- HOURS ----------
     used = sum(
         1
         for r in st.session_state.TT
@@ -498,7 +519,6 @@ def add_entry(cls, sub, day, start):
     if maxh is None or used + dur > maxh:
         return "Weekly hours exceeded"
 
-    # ---------- INSERT INTO SUPABASE ----------
     for p in range(start, start + dur):
         db_entry = {
             "class_id": cls,
@@ -575,6 +595,8 @@ with c1:
             .dropna()
             .unique()
             .tolist()
+            if "Class_ID" in teaching.columns and "Subject_ID" in teaching.columns
+            else []
         )
 
         if not subs:
@@ -698,42 +720,44 @@ with tab1:
         )
 
 with tab2:
-    fname = st.selectbox("Faculty", sorted(FAC_NAME.values()))
-    fid = [k for k, v in FAC_NAME.items() if v == fname][0]
+    fname = st.selectbox("Faculty", sorted(FAC_NAME.values())) if FAC_NAME else None
+    if fname:
+        fid = [k for k, v in FAC_NAME.items() if v == fname][0]
 
-    fdf = df[df["Faculty"] == fid] if "Faculty" in df.columns else pd.DataFrame()
+        fdf = df[df["Faculty"] == fid] if "Faculty" in df.columns else pd.DataFrame()
 
-    if not fdf.empty:
-        st.dataframe(
-            faculty_grid_with_availability(fdf, fid),
-            use_container_width=True,
-        )
+        if not fdf.empty:
+            st.dataframe(
+                faculty_grid_with_availability(fdf, fid),
+                use_container_width=True,
+            )
 
-    st.caption("🔴 Red cells indicate faculty unavailable slots")
+        st.caption("🔴 Red cells indicate faculty unavailable slots")
 
 with tab3:
-    lab = st.selectbox(
-        "Lab",
-        sorted(labs_df["Lab_Subject"].dropna().unique()),
-    )
-
-    related_labs = [
-        b
-        for pair in BI_LABS
-        if lab in pair
-        for b in pair
-    ]
-
-    ldf = df[df["Subject"].isin([lab] + related_labs)] if "Subject" in df.columns else pd.DataFrame()
-
-    if not ldf.empty:
-        st.dataframe(
-            grid(
-                ldf,
-                lambda r: f'{r["Class"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
-            ),
-            use_container_width=True,
+    if "Lab_Subject" in labs_df.columns:
+        lab = st.selectbox(
+            "Lab",
+            sorted(labs_df["Lab_Subject"].dropna().unique()),
         )
+
+        related_labs = [
+            b
+            for pair in BI_LABS
+            if lab in pair
+            for b in pair
+        ]
+
+        ldf = df[df["Subject"].isin([lab] + related_labs)] if "Subject" in df.columns else pd.DataFrame()
+
+        if not ldf.empty:
+            st.dataframe(
+                grid(
+                    ldf,
+                    lambda r: f'{r["Class"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
+                ),
+                use_container_width=True,
+            )
 
 with tab4:
     st.subheader("Theory Room Planning")
@@ -807,7 +831,6 @@ def create_excel():
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
 
         if not df.empty and "Class" in df.columns:
-            # CLASS TIMETABLES
             for class_name in df["Class"].dropna().unique():
                 tt = grid(
                     df[df["Class"] == class_name],
@@ -818,7 +841,6 @@ def create_excel():
                     sheet_name=safe_sheet_name(class_name, "CLASS_"),
                 )
 
-            # FACULTY TIMETABLES
             for fac in df["Faculty"].dropna().unique():
                 tt = grid(
                     df[df["Faculty"] == fac],
@@ -829,18 +851,17 @@ def create_excel():
                     sheet_name=safe_sheet_name(fac, "FAC_"),
                 )
 
-            # LAB TIMETABLES
-            for lab_name in labs_df["Lab_Subject"].dropna().unique():
-                tt = grid(
-                    df[df["Subject"] == lab_name],
-                    lambda r: r["Class"],
-                )
-                tt.to_excel(
-                    writer,
-                    sheet_name=safe_sheet_name(lab_name, "LAB_"),
-                )
+            if "Lab_Subject" in labs_df.columns:
+                for lab_name in labs_df["Lab_Subject"].dropna().unique():
+                    tt = grid(
+                        df[df["Subject"] == lab_name],
+                        lambda r: r["Class"],
+                    )
+                    tt.to_excel(
+                        writer,
+                        sheet_name=safe_sheet_name(lab_name, "LAB_"),
+                    )
 
-            # ROOM TIMETABLES
             for room_name in df["Room"].dropna().unique():
                 if str(room_name).strip() == "":
                     continue
