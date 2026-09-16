@@ -43,14 +43,14 @@ DAY_MAP = {
     "SATURDAY": "Saturday",
 }
 
-TWO_PERIOD_SUBS = {"EWS", "ITWS", "EGT", "NSS", "HWYS"}
-THREE_PERIOD_SUBS = {"EEEWS(ECE)", "EEEWS(EEE)", "EGP"}
-EXCLUDE_THEORY_ROOM = {"ITWS", "EWS", "EGP"}
+TWO_PERIOD_SUBS = {"Makers Lab", EWS", "AIT", "DTI", "NSS", "HWYS"}
+THREE_PERIOD_SUBS = {"BEEE(ECE) Lab", "BEEE(EEE) Lab", "CHE Lab", "PHY Lab", "CP Lab", "DLD Lab"}
+EXCLUDE_THEORY_ROOM = {"DTI", "Makers Lab", "EGP", "EWS"}
 
-BI_LABS = [
-    {"EC LAB", "EP LAB"},
-    {"EP LAB", "NAS LAB"},
-]
+# BI_LABS = [
+ #   {"EC LAB", "EP LAB"},
+  #  {"EP LAB", "NAS LAB"},
+#]
 
 CONTINUOUS_SLOTS = {(1, 2), (3, 4), (1, 4), (5, 7)}
 
