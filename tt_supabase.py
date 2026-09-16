@@ -764,7 +764,7 @@ with tab3:
             lab = st.selectbox("Lab", lab_list)
 
             # Extract base lab target and associated bi-lab subjects
-            related_labs = [
+           # related_labs = [
             #    b
              #   for pair in BI_LABS
               #  if any(lab.lower() in p.lower() or p.lower() in lab.lower() for p in pair)
