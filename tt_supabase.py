@@ -770,7 +770,7 @@ with tab3:
               #  if any(lab.lower() in p.lower() or p.lower() in lab.lower() for p in pair)
                # for b in pair
             #]
-            all_target_labs = list(set([lab] + related_labs))
+         #   all_target_labs = list(set([lab] + related_labs))
 
             if not df.empty and "Subject" in df.columns:
                 # Use fuzzy/contains search across all timetable entries
