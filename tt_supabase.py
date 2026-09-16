@@ -765,11 +765,11 @@ with tab3:
 
             # Extract base lab target and associated bi-lab subjects
             related_labs = [
-                b
-                for pair in BI_LABS
-                if any(lab.lower() in p.lower() or p.lower() in lab.lower() for p in pair)
-                for b in pair
-            ]
+            #    b
+             #   for pair in BI_LABS
+              #  if any(lab.lower() in p.lower() or p.lower() in lab.lower() for p in pair)
+               # for b in pair
+            #]
             all_target_labs = list(set([lab] + related_labs))
 
             if not df.empty and "Subject" in df.columns:
