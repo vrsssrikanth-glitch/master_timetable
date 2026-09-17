@@ -309,7 +309,11 @@ if "HOURS" in teaching_cols_upper:
 # LOOKUPS
 # ==================================================
 FAC_NAME = (
-    dict(zip(faculty["Faculty_ID"], faculty["Faculty_Name"]))
+    {
+        clean(r.Faculty_ID): clean(r.Faculty_Name)
+        for _, r in faculty.iterrows()
+        if clean(r.Faculty_ID) and clean(r.Faculty_Name)
+    }
     if "Faculty_ID" in faculty.columns and "Faculty_Name" in faculty.columns
     else {}
 )
@@ -723,7 +727,8 @@ with tab1:
         )
 
 with tab2:
-    fname = st.selectbox("Faculty", sorted(FAC_NAME.values())) if FAC_NAME else None
+    sorted_fac_names = sorted(list(set(str(v) for v in FAC_NAME.values() if v)))
+    fname = st.selectbox("Faculty", sorted_fac_names) if sorted_fac_names else None
     if fname:
         fid = [k for k, v in FAC_NAME.items() if v == fname][0]
 
