@@ -202,40 +202,6 @@ def is_valid_start_slot(sub, start):
     return True, ""
 
 
-def subject_progress(cls, sub):
-    used = sum(
-        1
-        for r in st.session_state.TT
-        if clean(r.get("Class")).upper() == clean(cls).upper()
-        and clean(r.get("Subject")).upper() == clean(sub).upper()
-    )
-    total = SUB_MAX_HOURS.get((cls, sub), 0)
-    return f"{used}/{total}"
-
-
-def pending_load_row(cls):
-    if "Class_ID" not in teaching.columns or "Subject_ID" not in teaching.columns:
-        return "Load data unavailable"
-
-    cls_mask = teaching["Class_ID"].astype(str).str.strip().str.upper() == str(cls).strip().upper()
-    subs = teaching[cls_mask]["Subject_ID"].unique().tolist()
-    parts = []
-
-    for s in subs:
-        used = sum(
-            1
-            for r in st.session_state.TT
-            if clean(r.get("Class")).upper() == clean(cls).upper()
-            and clean(r.get("Subject")).upper() == clean(s).upper()
-        )
-        total = SUB_MAX_HOURS.get((cls, s), 0)
-
-        if used < total:
-            parts.append(f"{s}: {used}/{total}")
-
-    return " | ".join(parts) if parts else "All load completed"
-
-
 def library_overflow(day, period):
     used = {
         r.get("Class")
@@ -269,7 +235,7 @@ for data in [
         if data[c].dtype == object:
             data[c] = data[c].apply(clean)
 
-# Fallback column mappings
+# Fallback column mappings for teaching table
 teaching_cols_upper = {c.upper(): c for c in teaching.columns}
 if "CLASS_ID" in teaching_cols_upper:
     teaching.rename(columns={teaching_cols_upper["CLASS_ID"]: "Class_ID"}, inplace=True)
@@ -281,21 +247,22 @@ if "HOURS" in teaching_cols_upper:
     teaching.rename(columns={teaching_cols_upper["HOURS"]: "Hours"}, inplace=True)
 
 # ==================================================
-# LOOKUPS
+# LOOKUPS & MAPPINGS
 # ==================================================
-FAC_NAME = (
-    {
-        clean(r.Faculty_ID): clean(r.Faculty_Name)
-        for _, r in faculty.iterrows()
-        if clean(r.Faculty_ID) and clean(r.Faculty_Name)
-    }
-    if "Faculty_ID" in faculty.columns and "Faculty_Name" in faculty.columns
-    else {}
-)
+fac_id_col = next((c for c in faculty.columns if c.lower() == "faculty_id"), None)
+fac_name_col = next((c for c in faculty.columns if c.lower() == "faculty_name"), None)
+
+FAC_NAME = {}
+if fac_id_col and fac_name_col:
+    for _, r in faculty.iterrows():
+        fid = clean(r[fac_id_col]).upper()
+        fname = clean(r[fac_name_col])
+        if fid and fname:
+            FAC_NAME[fid] = fname
 
 SUB_FAC = (
     {
-        (clean(r.Class_ID), clean(r.Subject_ID)): clean(r.Faculty_ID)
+        (clean(r.Class_ID).upper(), clean(r.Subject_ID).upper()): clean(r.Faculty_ID).upper()
         for _, r in teaching.iterrows()
     }
     if {"Class_ID", "Subject_ID", "Faculty_ID"}.issubset(teaching.columns)
@@ -304,7 +271,7 @@ SUB_FAC = (
 
 SUB_MAX_HOURS = (
     {
-        (clean(r.Class_ID), clean(r.Subject_ID)): int(r.Hours) if str(r.Hours).isdigit() else 0
+        (clean(r.Class_ID).upper(), clean(r.Subject_ID).upper()): int(r.Hours) if str(r.Hours).isdigit() else 0
         for _, r in teaching.iterrows()
     }
     if {"Class_ID", "Subject_ID", "Hours"}.issubset(teaching.columns)
@@ -320,7 +287,7 @@ if not fac_avail.empty:
 
     if f_col and d_col and p_col:
         for _, r in fac_avail.iterrows():
-            fac_id = clean(r[f_col])
+            fac_id = clean(r[f_col]).upper()
             raw_day = clean(r[d_col]).upper()
             mapped_day = DAY_MAP.get(raw_day, raw_day.title())
             raw_p = r[p_col]
@@ -374,7 +341,7 @@ if "TT" not in st.session_state:
     st.session_state.TT = load_timetable()
 
 # ==================================================
-# CORE CHECKS
+# CORE CHECKS & LOAD HELPERS
 # ==================================================
 def busy(key, val, day, p):
     key_alt = "class_id" if key == "Class" else "faculty_id" if key == "Faculty" else key.lower()
@@ -397,6 +364,34 @@ def room_clash(day, start, dur, room):
         and int(r.get("Period", 0)) in range(start, start + dur)
         for r in st.session_state.TT
     )
+
+
+def pending_load_row(cls):
+    cls_col = next((c for c in teaching.columns if c.lower() == "class_id"), None)
+    sub_col = next((c for c in teaching.columns if c.lower() == "subject_id"), None)
+
+    if not cls_col or not sub_col:
+        return "Load data unavailable"
+
+    cls_mask = teaching[cls_col].astype(str).str.strip().str.upper() == str(cls).strip().upper()
+    subs = teaching[cls_mask][sub_col].dropna().unique().tolist()
+    parts = []
+
+    for s in subs:
+        used = sum(
+            1
+            for r in st.session_state.TT
+            if clean(r.get("Class")).upper() == clean(cls).upper()
+            and clean(r.get("Subject")).upper() == clean(s).upper()
+        )
+        total = SUB_MAX_HOURS.get((clean(cls).upper(), clean(s).upper()), 0)
+
+        if total > 0 and used < total:
+            parts.append(f"{s}: {used}/{total}")
+        elif total == 0 and used == 0:
+            parts.append(f"{s}: {used}/?")
+
+    return " | ".join(parts) if parts else "All load completed"
 
 
 # ==================================================
@@ -424,7 +419,7 @@ def add_entry(cls, sub, day, start):
     if clean(sub).upper() == "WEEKLY TEST":
         fac = WEEKLY_TEST_FACULTY
     else:
-        fac = SUB_FAC.get((cls, sub), "NA")
+        fac = SUB_FAC.get((clean(cls).upper(), clean(sub).upper()), "NA")
 
     dur = subject_duration(sub)
 
@@ -475,7 +470,7 @@ def add_entry(cls, sub, day, start):
         and clean(r.get("Subject")).upper() == clean(sub).upper()
     )
 
-    maxh = SUB_MAX_HOURS.get((cls, sub))
+    maxh = SUB_MAX_HOURS.get((clean(cls).upper(), clean(sub).upper()))
 
     if maxh is not None and maxh > 0 and used + dur > maxh:
         return "Weekly hours exceeded"
@@ -511,7 +506,7 @@ def add_entry(cls, sub, day, start):
 # AI SUPPORT - SUGGESTIONS ONLY
 # ==================================================
 def suggest_slots(cls, sub):
-    fac = SUB_FAC.get((cls, sub))
+    fac = SUB_FAC.get((clean(cls).upper(), clean(sub).upper()))
     dur = subject_duration(sub)
     suggestions = []
 
@@ -660,7 +655,7 @@ def faculty_grid_with_availability(data, faculty_id):
 
     for day in DAYS:
         for p in PERIODS:
-            if (faculty_id, day, p) in FAC_BLOCKED:
+            if (faculty_id.upper(), day, p) in FAC_BLOCKED:
                 if not g.loc[day, p]:
                     g.loc[day, p] = "UNAVAILABLE"
                 style.loc[day, p] = "background-color: #ffcccc; color: #900000; font-weight: bold;"
@@ -677,7 +672,11 @@ tab1, tab2, tab3, tab4 = st.tabs(
 
 with tab1:
     cls_v = st.selectbox("Class", CLASSES, key="cv")
-    cdf = df[df["Class"].astype(str).str.strip().str.upper() == str(cls_v).strip().upper()] if "Class" in df.columns and not df.empty else pd.DataFrame()
+    cdf = (
+        df[df["Class"].astype(str).str.strip().str.upper() == str(cls_v).strip().upper()]
+        if "Class" in df.columns and not df.empty
+        else pd.DataFrame()
+    )
 
     if not cdf.empty:
         st.dataframe(
@@ -686,7 +685,7 @@ with tab1:
                 lambda r: (
                     f'{r["Subject"]} | CLASS COORDINATOR'
                     if r["Faculty"] == WEEKLY_TEST_FACULTY
-                    else f'{r["Subject"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}'
+                    else f'{r["Subject"]} | {FAC_NAME.get(clean(r["Faculty"]).upper(), r["Faculty"])}'
                 ),
             ),
             use_container_width=True,
@@ -698,7 +697,7 @@ with tab2:
     if fname:
         fid = [k for k, v in FAC_NAME.items() if v == fname][0]
 
-        fdf = df[df["Faculty"] == fid] if "Faculty" in df.columns and not df.empty else pd.DataFrame()
+        fdf = df[df["Faculty"].astype(str).str.upper() == fid.upper()] if "Faculty" in df.columns and not df.empty else pd.DataFrame()
 
         st.dataframe(
             faculty_grid_with_availability(fdf, fid),
@@ -732,7 +731,7 @@ with tab3:
                     st.dataframe(
                         grid(
                             ldf,
-                            lambda r: f'{r["Class"]} | {r["Subject"]} | {FAC_NAME.get(r["Faculty"], r["Faculty"])}',
+                            lambda r: f'{r["Class"]} | {r["Subject"]} | {FAC_NAME.get(clean(r["Faculty"]).upper(), r["Faculty"])}',
                         ),
                         use_container_width=True,
                     )
@@ -763,7 +762,7 @@ with tab4:
                     mirror,
                     lambda r: (
                         f'{r["Class"]} | {r["Subject"]} | '
-                        f'{FAC_NAME.get(r["Faculty"], r["Faculty"])}'
+                        f'{FAC_NAME.get(clean(r["Faculty"]).upper(), r["Faculty"])}'
                     ),
                 ),
                 use_container_width=True,
@@ -781,7 +780,7 @@ def create_excel():
             for class_name in df["Class"].dropna().unique():
                 tt = grid(
                     df[df["Class"] == class_name],
-                    lambda r: f'{r["Subject"]}\n{r["Faculty"]}',
+                    lambda r: f'{r["Subject"]}\n{FAC_NAME.get(clean(r["Faculty"]).upper(), r["Faculty"])}',
                 )
                 tt.to_excel(
                     writer,
