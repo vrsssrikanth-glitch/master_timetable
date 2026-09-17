@@ -52,9 +52,8 @@ BI_LABS = [
     {"EP LAB", "NAS LAB"},
 ]
 
-# Slot start restrictions specifically for multi-period subjects
-VALID_2_PERIOD_STARTS = {1, 3, 5}  # e.g., 1-2, 3-4, 5-6
-VALID_3_PERIOD_STARTS = {1, 5}     # e.g., 1-3, 5-7
+VALID_2_PERIOD_STARTS = {1, 3, 5}  # 1-2, 3-4, 5-6
+VALID_3_PERIOD_STARTS = {1, 5}     # 1-3, 5-7
 
 WEEKLY_TEST_FACULTY = "WEEKLY_TEST_FACULTY"
 
@@ -81,7 +80,6 @@ def clean(x):
 
 
 def fetch_table(table_name):
-    """Read all rows from a Supabase table, including tables > 1000 rows."""
     rows = []
     start = 0
     page_size = 1000
@@ -105,7 +103,6 @@ def fetch_table(table_name):
 
 
 def normalize_columns(df):
-    """Normalizes all DataFrame columns to standard Title_Case."""
     col_map = {
         "class_id": "Class_ID",
         "subject_id": "Subject_ID",
@@ -193,7 +190,6 @@ def subject_duration(sub):
 
 
 def is_valid_start_slot(sub, start):
-    """Enforces continuous slot rules specifically for multi-period subjects."""
     dur = subject_duration(sub)
     if dur == 2 and start not in VALID_2_PERIOD_STARTS:
         return False, "2-period subjects must start at Period 1, 3, or 5 (e.g., 1-2, 3-4, 5-6)."
@@ -235,7 +231,6 @@ for data in [
         if data[c].dtype == object:
             data[c] = data[c].apply(clean)
 
-# Fallback column mappings for teaching table
 teaching_cols_upper = {c.upper(): c for c in teaching.columns}
 if "CLASS_ID" in teaching_cols_upper:
     teaching.rename(columns={teaching_cols_upper["CLASS_ID"]: "Class_ID"}, inplace=True)
@@ -269,14 +264,15 @@ SUB_FAC = (
     else {}
 )
 
-SUB_MAX_HOURS = (
-    {
-        (clean(r.Class_ID).upper(), clean(r.Subject_ID).upper()): int(r.Hours) if str(r.Hours).isdigit() else 0
-        for _, r in teaching.iterrows()
-    }
-    if {"Class_ID", "Subject_ID", "Hours"}.issubset(teaching.columns)
-    else {}
-)
+SUB_MAX_HOURS = {}
+if {"Class_ID", "Subject_ID", "Hours"}.issubset(teaching.columns):
+    for _, r in teaching.iterrows():
+        c_id = clean(r["Class_ID"]).upper()
+        s_id = clean(r["Subject_ID"]).upper()
+        try:
+            SUB_MAX_HOURS[(c_id, s_id)] = int(r["Hours"]) if pd.notna(r["Hours"]) else 0
+        except (ValueError, TypeError):
+            SUB_MAX_HOURS[(c_id, s_id)] = 0
 
 FAC_BLOCKED = set()
 if not fac_avail.empty:
@@ -369,27 +365,34 @@ def room_clash(day, start, dur, room):
 def pending_load_row(cls):
     cls_col = next((c for c in teaching.columns if c.lower() == "class_id"), None)
     sub_col = next((c for c in teaching.columns if c.lower() == "subject_id"), None)
+    hrs_col = next((c for c in teaching.columns if c.lower() == "hours"), None)
 
     if not cls_col or not sub_col:
         return "Load data unavailable"
 
     cls_mask = teaching[cls_col].astype(str).str.strip().str.upper() == str(cls).strip().upper()
-    subs = teaching[cls_mask][sub_col].dropna().unique().tolist()
+    class_teaching_df = teaching[cls_mask]
     parts = []
 
-    for s in subs:
+    for _, row in class_teaching_df.iterrows():
+        s = clean(row[sub_col])
+        if not s:
+            continue
+
+        try:
+            total = int(row[hrs_col]) if hrs_col and pd.notna(row[hrs_col]) else 0
+        except (ValueError, TypeError):
+            total = 0
+
         used = sum(
             1
             for r in st.session_state.TT
             if clean(r.get("Class")).upper() == clean(cls).upper()
             and clean(r.get("Subject")).upper() == clean(s).upper()
         )
-        total = SUB_MAX_HOURS.get((clean(cls).upper(), clean(s).upper()), 0)
 
-        if total > 0 and used < total:
+        if used < total:
             parts.append(f"{s}: {used}/{total}")
-        elif total == 0 and used == 0:
-            parts.append(f"{s}: {used}/?")
 
     return " | ".join(parts) if parts else "All load completed"
 
