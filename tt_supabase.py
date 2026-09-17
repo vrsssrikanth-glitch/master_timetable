@@ -52,7 +52,9 @@ BI_LABS = [
     {"EP LAB", "NAS LAB"},
 ]
 
-#CONTINUOUS_SLOTS = {(1, 2), (3, 4), (1, 4), (5, 7), (5, 6), (6, 7),}
+# Slot start restrictions specifically for multi-period subjects
+VALID_2_PERIOD_STARTS = {1, 3, 5}  # e.g., 1-2, 3-4, 5-6
+VALID_3_PERIOD_STARTS = {1, 5}     # e.g., 1-3, 5-7
 
 WEEKLY_TEST_FACULTY = "WEEKLY_TEST_FACULTY"
 
@@ -67,7 +69,6 @@ TABLE_FAC_AVAIL = "faculty_availability"
 TABLE_LABS = "labs"
 TABLE_ROOMS = "rooms"
 TABLE_TIMETABLE = "timetable"
-TABLE_ROOM_LOCKS = "class_room_locks"
 
 
 # ==================================================
@@ -179,42 +180,6 @@ def delete_timetable_entry(cls, day, period):
         return False
 
 
-def load_room_locks():
-    try:
-        rows = fetch_table(TABLE_ROOM_LOCKS)
-        if rows.empty:
-            return {}
-
-        return {
-            clean(r.get("class_id", r.get("Class_ID", ""))): clean(r.get("room", r.get("Room", "")))
-            for r in rows.to_dict("records")
-        }
-    except Exception as e:
-        st.error(f"Could not load room locks from Supabase: {e}")
-        st.stop()
-
-
-def lock_class_to_room(cls, room):
-    try:
-        supabase.table(TABLE_ROOM_LOCKS).upsert(
-            {"class_id": cls, "room": room},
-            on_conflict="class_id",
-        ).execute()
-        return True
-    except Exception as e:
-        st.error(f"Could not save room lock: {e}")
-        return False
-
-
-def unlock_class_room(cls):
-    try:
-        supabase.table(TABLE_ROOM_LOCKS).delete().eq("class_id", cls).execute()
-        return True
-    except Exception as e:
-        st.error(f"Could not remove room lock: {e}")
-        return False
-
-
 def subject_duration(sub):
     if clean(sub).upper() == "WEEKLY TEST":
         return 2
@@ -225,6 +190,16 @@ def subject_duration(sub):
     if sub in TWO_PERIOD_SUBS:
         return 2
     return 1
+
+
+def is_valid_start_slot(sub, start):
+    """Enforces continuous slot rules specifically for multi-period subjects."""
+    dur = subject_duration(sub)
+    if dur == 2 and start not in VALID_2_PERIOD_STARTS:
+        return False, "2-period subjects must start at Period 1, 3, or 5 (e.g., 1-2, 3-4, 5-6)."
+    if dur == 3 and start not in VALID_3_PERIOD_STARTS:
+        return False, "3-period subjects/labs must start at Period 1 or 5 (e.g., 1-3, 5-7)."
+    return True, ""
 
 
 def subject_progress(cls, sub):
@@ -387,7 +362,6 @@ CLASSES = (
 )
 
 LOCKED_CLASSES = CLASSES[:14]
-FLEX_CLASSES = CLASSES[14:]
 
 if not CLASSES:
     st.error("No classes found in Supabase table 'classes'. Ensure 'Class_ID' column exists.")
@@ -398,9 +372,6 @@ if not CLASSES:
 # ==================================================
 if "TT" not in st.session_state:
     st.session_state.TT = load_timetable()
-
-if "CLASS_ROOM_LOCK" not in st.session_state:
-    st.session_state.CLASS_ROOM_LOCK = load_room_locks()
 
 # ==================================================
 # CORE CHECKS
@@ -428,22 +399,12 @@ def room_clash(day, start, dur, room):
     )
 
 
-def is_continuous(start, dur):
-    return (start, start + dur - 1) in CONTINUOUS_SLOTS
-
-
 # ==================================================
 # THEORY ROOM ALLOCATION
 # ==================================================
 def get_theory_room(cls, day, start, dur):
-    if cls in st.session_state.CLASS_ROOM_LOCK:
-        return st.session_state.CLASS_ROOM_LOCK[cls]
-
     if cls in LOCKED_CLASSES:
         return PRIMARY_ROOMS[LOCKED_CLASSES.index(cls)]
-
-    if not is_continuous(start, dur):
-        return None
 
     for room in PRIMARY_ROOMS:
         if not room_clash(day, start, dur, room):
@@ -456,9 +417,11 @@ def get_theory_room(cls, day, start, dur):
 # ADD ENTRY
 # ==================================================
 def add_entry(cls, sub, day, start):
+    valid_slot, slot_err = is_valid_start_slot(sub, start)
+    if not valid_slot:
+        return slot_err
+
     if clean(sub).upper() == "WEEKLY TEST":
-        if (day, start) not in [("Monday", 1), ("Tuesday", 1)]:
-            return "Weekly Test can only be scheduled on Monday Period 1 or Tuesday Period 1."
         fac = WEEKLY_TEST_FACULTY
     else:
         fac = SUB_FAC.get((cls, sub), "NA")
@@ -480,10 +443,7 @@ def add_entry(cls, sub, day, start):
         room = get_theory_room(cls, day, start, dur)
 
         if not room:
-            return (
-                "No theory room available. Excess classes can use rooms "
-                "only in continuous slots (1-2, 3-4, 1-4, 5-7)."
-            )
+            return "No theory room available for this slot."
 
     for p in range(start, start + dur):
         if fac != WEEKLY_TEST_FACULTY and (fac, day, p) in FAC_BLOCKED:
@@ -558,6 +518,10 @@ def suggest_slots(cls, sub):
     for d in DAYS:
         for p in PERIODS:
             if p + dur - 1 > 7:
+                continue
+
+            valid_slot, _ = is_valid_start_slot(sub, p)
+            if not valid_slot:
                 continue
 
             if any(
@@ -786,35 +750,6 @@ with tab4:
         horizontal=True,
     )
 
-    room = st.radio(
-        "Select Room (Primary Rooms)",
-        PRIMARY_ROOMS,
-        horizontal=True,
-    )
-
-    locked_room = st.session_state.CLASS_ROOM_LOCK.get(mirror_cls)
-
-    if locked_room:
-        st.info(f"🔒 {mirror_cls} is currently locked to room {locked_room}")
-    else:
-        st.warning(f"⚠️ {mirror_cls} is not locked to any room")
-
-    c_lock, c_unlock = st.columns(2)
-
-    with c_lock:
-        if st.button("🔒 Lock this Class to this Room"):
-            if lock_class_to_room(mirror_cls, room):
-                st.session_state.CLASS_ROOM_LOCK[mirror_cls] = room
-                st.success(f"{mirror_cls} locked to {room}")
-
-    with c_unlock:
-        if locked_room and st.button("🔓 Unlock this Class"):
-            if unlock_class_room(mirror_cls):
-                del st.session_state.CLASS_ROOM_LOCK[mirror_cls]
-                st.success(f"{mirror_cls} unlocked from {locked_room}")
-
-    st.divider()
-
     if not df.empty and "Class" in df.columns:
         mirror = df[
             (df["Class"].astype(str).str.strip().str.upper() == str(mirror_cls).strip().upper())
@@ -833,12 +768,6 @@ with tab4:
                 ),
                 use_container_width=True,
             )
-
-    st.caption(
-        "📌 Policy: Locked classes always use their locked room. "
-        "Excess classes may occupy free rooms only in continuous slots "
-        "(1–2, 3–4, 1–4, 5–7)."
-    )
 
 # ==================================================
 # DOWNLOAD EXCEL
@@ -901,7 +830,6 @@ st.markdown("---")
 
 if st.button("🔄 Refresh from Supabase"):
     st.session_state.pop("TT", None)
-    st.session_state.pop("CLASS_ROOM_LOCK", None)
     st.rerun()
 
 excel_data = create_excel()
