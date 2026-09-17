@@ -52,7 +52,7 @@ BI_LABS = [
     {"EP LAB", "NAS LAB"},
 ]
 
-CONTINUOUS_SLOTS = {(1, 2), (3, 4), (1, 4), (5, 7), (5, 6), (6, 7),}
+#CONTINUOUS_SLOTS = {(1, 2), (3, 4), (1, 4), (5, 7), (5, 6), (6, 7),}
 
 WEEKLY_TEST_FACULTY = "WEEKLY_TEST_FACULTY"
 
