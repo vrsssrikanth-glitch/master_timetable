@@ -215,43 +215,9 @@ def unlock_class_room(cls):
         return False
 
 
-def ensure_weekly_tests():
-    """Create Monday P1 weekly-test rows once for classes that do not have one."""
-    existing = st.session_state.TT
-
-    for cls in CLASSES:
-        already_exists = any(
-            r.get("Class") == cls
-            and r.get("Subject") == "WEEKLY TEST"
-            and r.get("Day") == "Monday"
-            and int(r.get("Period", 0)) == 1
-            for r in existing
-        )
-
-        if not already_exists:
-            entry = {
-                "class_id": cls,
-                "subject": "WEEKLY TEST",
-                "faculty_id": WEEKLY_TEST_FACULTY,
-                "day": "Monday",
-                "period": 1,
-                "room": "",
-            }
-
-            if save_timetable_entry(entry):
-                st.session_state.TT.append(
-                    {
-                        "Class": cls,
-                        "Subject": "WEEKLY TEST",
-                        "Faculty": WEEKLY_TEST_FACULTY,
-                        "Day": "Monday",
-                        "Period": 1,
-                        "Room": "",
-                    }
-                )
-
-
 def subject_duration(sub):
+    if clean(sub).upper() == "WEEKLY TEST":
+        return 1
     if "LAB" in str(sub).upper():
         return 3
     if sub in THREE_PERIOD_SUBS:
@@ -265,7 +231,8 @@ def subject_progress(cls, sub):
     used = sum(
         1
         for r in st.session_state.TT
-        if r.get("Class") == cls and r.get("Subject") == sub
+        if clean(r.get("Class")).upper() == clean(cls).upper()
+        and clean(r.get("Subject")).upper() == clean(sub).upper()
     )
     total = SUB_MAX_HOURS.get((cls, sub), 0)
     return f"{used}/{total}"
@@ -276,7 +243,7 @@ def pending_load_row(cls):
         return "Load data unavailable"
 
     cls_mask = teaching["Class_ID"].astype(str).str.strip().str.upper() == str(cls).strip().upper()
-    subs = teaching[cls_mask]["Subject_ID"].unique()
+    subs = teaching[cls_mask]["Subject_ID"].unique().tolist()
     parts = []
 
     for s in subs:
@@ -427,7 +394,6 @@ if not CLASSES:
 # ==================================================
 if "TT" not in st.session_state:
     st.session_state.TT = load_timetable()
-    ensure_weekly_tests()
 
 if "CLASS_ROOM_LOCK" not in st.session_state:
     st.session_state.CLASS_ROOM_LOCK = load_room_locks()
@@ -486,7 +452,11 @@ def get_theory_room(cls, day, start, dur):
 # ADD ENTRY
 # ==================================================
 def add_entry(cls, sub, day, start):
-    fac = SUB_FAC.get((cls, sub), "NA")
+    if clean(sub).upper() == "WEEKLY TEST":
+        fac = WEEKLY_TEST_FACULTY
+    else:
+        fac = SUB_FAC.get((cls, sub), "NA")
+
     dur = subject_duration(sub)
 
     if start + dur - 1 > 7:
@@ -510,13 +480,13 @@ def add_entry(cls, sub, day, start):
             )
 
     for p in range(start, start + dur):
-        if (fac, day, p) in FAC_BLOCKED:
+        if fac != WEEKLY_TEST_FACULTY and (fac, day, p) in FAC_BLOCKED:
             return f"{FAC_NAME.get(fac, fac)} unavailable"
 
         if busy("Class", cls, day, p):
             return "Class clash"
 
-        if busy("Faculty", fac, day, p):
+        if fac != WEEKLY_TEST_FACULTY and busy("Faculty", fac, day, p):
             existing = [
                 r
                 for r in st.session_state.TT
@@ -590,7 +560,7 @@ def suggest_slots(cls, sub):
             ):
                 continue
 
-            if any(
+            if fac != WEEKLY_TEST_FACULTY and any(
                 (fac, d, x) in FAC_BLOCKED
                 for x in range(p, p + dur)
             ):
@@ -614,7 +584,6 @@ with c1:
 
     cls = st.selectbox("Class", CLASSES, key="add_cls_selectbox")
 
-    # Case-insensitive & whitespace-stripped matching for teaching subjects
     cls_mask = teaching["Class_ID"].astype(str).str.strip().str.upper() == str(cls).strip().upper()
     subs = (
         teaching[cls_mask]["Subject_ID"]
@@ -626,6 +595,9 @@ with c1:
         if "Class_ID" in teaching.columns and "Subject_ID" in teaching.columns
         else []
     )
+
+    if "WEEKLY TEST" not in [s.upper() for s in subs]:
+        subs.append("WEEKLY TEST")
 
     with st.form("add"):
         if not subs:
@@ -669,8 +641,6 @@ with c2:
 
             if not matching:
                 st.warning("No timetable entry found.")
-            elif matching[0].get("Subject") == "WEEKLY TEST":
-                st.warning("Weekly Test cannot be deleted from this screen.")
             elif delete_timetable_entry(dcls, dday, dper):
                 st.session_state.TT = [
                     r
@@ -772,7 +742,6 @@ with tab3:
         if lab_list:
             lab = st.selectbox("Lab", lab_list)
 
-            # Extract base lab target and associated bi-lab subjects
             related_labs = [
                 b
                 for pair in BI_LABS
@@ -782,7 +751,6 @@ with tab3:
             all_target_labs = list(set([lab] + related_labs))
 
             if not df.empty and "Subject" in df.columns:
-                # Use fuzzy/contains search across all timetable entries
                 ldf = df[
                     df["Subject"].apply(
                         lambda s: any(t.lower() in str(s).lower() for t in all_target_labs)
