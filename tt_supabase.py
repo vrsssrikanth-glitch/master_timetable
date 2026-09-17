@@ -76,9 +76,39 @@ TABLE_ROOM_LOCKS = "class_room_locks"
 # HELPERS
 # ==================================================
 def clean(x):
-    if pd.isna(x):
-        return "NA"
+    """Normalize a single database value for matching/display."""
+    if x is None:
+        return ""
+    try:
+        if pd.isna(x):
+            return ""
+    except (TypeError, ValueError):
+        pass
     return str(x).strip().upper()
+
+
+def clean_columns(df):
+    """Clean text values in a DataFrame without changing column names."""
+    if df is None or df.empty:
+        return df.copy() if df is not None else pd.DataFrame()
+
+    out = df.copy()
+    for col in out.columns:
+        if out[col].dtype == object or pd.api.types.is_string_dtype(out[col]):
+            out[col] = out[col].apply(clean)
+    return out
+
+
+def require_columns(df, table_name, required):
+    """Stop with a useful message when a Supabase table is missing columns."""
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        st.error(
+            f"Supabase table '{table_name}' is missing required column(s): "
+            + ", ".join(missing)
+            + f". Available columns: {', '.join(map(str, df.columns))}"
+        )
+        st.stop()
 
 
 def fetch_table(table_name):
