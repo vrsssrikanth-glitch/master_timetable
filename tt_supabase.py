@@ -217,7 +217,7 @@ def unlock_class_room(cls):
 
 def subject_duration(sub):
     if clean(sub).upper() == "WEEKLY TEST":
-        return 1
+        return 2
     if "LAB" in str(sub).upper():
         return 3
     if sub in THREE_PERIOD_SUBS:
@@ -457,6 +457,8 @@ def get_theory_room(cls, day, start, dur):
 # ==================================================
 def add_entry(cls, sub, day, start):
     if clean(sub).upper() == "WEEKLY TEST":
+        if (day, start) not in [("Monday", 1), ("Tuesday", 1)]:
+            return "Weekly Test can only be scheduled on Monday Period 1 or Tuesday Period 1."
         fac = WEEKLY_TEST_FACULTY
     else:
         fac = SUB_FAC.get((cls, sub), "NA")
