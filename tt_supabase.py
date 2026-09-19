@@ -43,7 +43,7 @@ DAY_MAP = {
     "SATURDAY": "Saturday",
 }
 
-TWO_PERIOD_SUBS = {"Makers Lab", "EWS", "AIT", "DTI", "NSS", "HWYS","Makers Lab(Maths&Physics)", "Makers Lab(Maths&Chemistry)"}
+TWO_PERIOD_SUBS = {"Makers Lab", "EWS", "AIT", "DTI", "NSS", "HWYS"}
 THREE_PERIOD_SUBS = {"BEEE(ECE) Lab", "BEEE(EEE) Lab", "CHE Lab", "PHY Lab", "CP Lab", "DLD Lab"}
 EXCLUDE_THEORY_ROOM = {"DTI", "Makers Lab", "EGP", "EWS"}
 
@@ -52,7 +52,7 @@ BI_LABS = [
     {"EP LAB", "NAS LAB"},
 ]
 
-VALID_2_PERIOD_STARTS = {1, 3, 5, 6}  # 1-2, 3-4, 5-6
+VALID_2_PERIOD_STARTS = {1, 3, 5, 6}  # 1-2, 3-4, 5-6, 6-7
 VALID_3_PERIOD_STARTS = {1, 2, 5}     # 1-3, 5-7
 
 WEEKLY_TEST_FACULTY = "WEEKLY_TEST_FACULTY"
